@@ -1,0 +1,12 @@
+require:
+  - rubocop-performance
+
+Style/HashSyntax:
+  EnforcedStyle: no_mixed_keys
+
+Naming/FileName:
+  Exclude:
+    - 'lib/sidekiq-crond.rb'
+
+Layout/LineLength:
+  Max: 120
