@@ -13,7 +13,7 @@ module Sidekiq
     class Poller < Sidekiq::Scheduled::Poller
       def enqueue
         time = Time.now.utc
-        Sidekiq::Cron::Job.all.each do |job|
+        Sidekiq::Crond::Job.all.each do |job|
           enqueue_job(job, time)
         end
       rescue StandardError => e

@@ -212,7 +212,7 @@ module Sidekiq
         end
         job_hashes.compact.reject(&:empty?).collect do |h|
           # no need to fetch missing args from redis since we just got this hash from there
-          Sidekiq::Cron::Job.new(h.merge(fetch_missing_args: false))
+          Sidekiq::Crond::Job.new(h.merge(fetch_missing_args: false))
         end
       end
 
@@ -302,7 +302,7 @@ module Sidekiq
                          @klass.get_sidekiq_options
                        when String
                          begin
-                           Sidekiq::Cron::Support.constantize(@klass).get_sidekiq_options
+                           Sidekiq::Crond::Support.constantize(@klass).get_sidekiq_options
                          rescue Exception => e
                            # Unknown class
                            { 'queue' => 'default' }
@@ -520,9 +520,9 @@ module Sidekiq
 
       # remove "removed jobs" between current jobs and new jobs
       def self.destroy_removed_jobs(new_job_names)
-        current_job_names = Sidekiq::Cron::Job.all.map(&:name)
+        current_job_names = Sidekiq::Crond::Job.all.map(&:name)
         removed_job_names = current_job_names - new_job_names
-        removed_job_names.each { |j| Sidekiq::Cron::Job.destroy(j) }
+        removed_job_names.each { |j| Sidekiq::Crond::Job.destroy(j) }
         removed_job_names
       end
 

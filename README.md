@@ -103,14 +103,14 @@ class HardWorker
   end
 end
 
-Sidekiq::Cron::Job.create(name: 'Hard worker - every 5min', cron: '*/5 * * * *', class: 'HardWorker') # execute at every 5 minutes, ex: 12:05, 12:10, 12:15...etc
+Sidekiq::Crond::Job.create(name: 'Hard worker - every 5min', cron: '*/5 * * * *', class: 'HardWorker') # execute at every 5 minutes, ex: 12:05, 12:10, 12:15...etc
 # => true
 ```
 
 `create` method will return only true/false if job was saved or not.
 
 ```ruby
-job = Sidekiq::Cron::Job.new(name: 'Hard worker - every 5min', cron: '*/5 * * * *', class: 'HardWorker')
+job = Sidekiq::Crond::Job.new(name: 'Hard worker - every 5min', cron: '*/5 * * * *', class: 'HardWorker')
 
 if job.valid?
   job.save
@@ -140,7 +140,7 @@ hash = {
   }
 }
 
-Sidekiq::Cron::Job.load_from_hash hash
+Sidekiq::Crond::Job.load_from_hash hash
 ```
 
 Load more jobs from array:
