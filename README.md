@@ -159,15 +159,15 @@ array = [
   }
 ]
 
-Sidekiq::Crond::Job.load_from_array array
+Sidekiq::Crond::Jobs.load_from_array array
 ```
 
 Bang-suffixed methods will remove jobs that are not present in the given hash/array,
 update jobs that have the same names, and create new ones when the names are previously unknown.
 
 ```ruby
-Sidekiq::Crond::Job#load_from_hash! hash
-Sidekiq::Crond::Job#load_from_array! array
+Sidekiq::Crond::Jobs#load_from_hash! hash
+Sidekiq::Crond::Jobs#load_from_array! array
 ```
 
 or from YML (same notation as Resque-scheduler)
@@ -193,7 +193,7 @@ second_job:
 schedule_file = "config/schedule.yml"
 
 if File.exist?(schedule_file) && Sidekiq.server?
-  Sidekiq::Crond::Job.load_from_hash YAML.load_file(schedule_file)
+  Sidekiq::Crond::Jobs.load_from_hash YAML.load_file(schedule_file)
 end
 ```
 
@@ -202,13 +202,13 @@ or you can use for loading jobs from yml file [sidekiq-cron-tasks](https://githu
 #### Finding jobs
 ```ruby
 #return array of all jobs
-Sidekiq::Crond::Job.all
+Sidekiq::Crond::Jobs.all
 
 #return one job by its unique name - case sensitive
-Sidekiq::Crond::Job.find "Job Name"
+Sidekiq::Crond::Jobs.find "Job Name"
 
 #return one job by its unique name - you can use hash with 'name' key
-Sidekiq::Crond::Job.find name: "Job Name"
+Sidekiq::Crond::Jobs.find name: "Job Name"
 
 #if job can't be found nil is returned
 ```
@@ -216,18 +216,18 @@ Sidekiq::Crond::Job.find name: "Job Name"
 #### Destroy jobs:
 ```ruby
 #destroys all jobs
-Sidekiq::Crond::Job.destroy_all!
+Sidekiq::Crond::Jobs.destroy_all!
 
 #destroy job by its name
-Sidekiq::Crond::Job.destroy "Job Name"
+Sidekiq::Crond::Jobs.destroy "Job Name"
 
 #destroy found job
-Sidekiq::Crond::Job.find('Job name').destroy
+Sidekiq::Crond::Jobs.find('Job name').destroy
 ```
 
 #### Work with job:
 ```ruby
-job = Sidekiq::Crond::Job.find('Job name')
+job = Sidekiq::Crond::Jobs.find('Job name')
 
 #disable cron scheduling
 job.disable!
@@ -267,7 +267,7 @@ Sidekiq.configure_server do |config|
   schedule_file = "config/schedule.yml"
 
   if File.exist?(schedule_file)
-    Sidekiq::Crond::Job.load_from_hash YAML.load_file(schedule_file)
+    Sidekiq::Crond::Jobs.load_from_hash YAML.load_file(schedule_file)
   end
 end
 ```

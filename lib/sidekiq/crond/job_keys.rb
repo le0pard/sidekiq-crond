@@ -2,8 +2,8 @@
 
 module Sidekiq
   module Crond
-    # Class with cron jobs info
-    class JobHelpers
+    # Class with cron job redis keys
+    class JobKeys
       REDIS_KEY_PREFIX = 'crond_job'
 
       class << self

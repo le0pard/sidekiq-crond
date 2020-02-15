@@ -2,31 +2,98 @@
 
 require 'fugit'
 require 'sidekiq'
-require 'sidekiq/util'
-require 'sidekiq/crond/job_helpers'
+require 'sidekiq/crond/job_keys'
 require 'sidekiq/crond/support'
 
 module Sidekiq
   module Crond
-    # Class with cron jobs
+    # Class with cron job instance
     class Job
-      include Util
-      extend Util
-
       # how long we would like to store informations about previous enqueues
       REMEMBER_THRESHOLD = 24 * 60 * 60
       LAST_ENQUEUE_TIME_FORMAT = '%Y-%m-%d %H:%M:%S %z'
 
+      attr_accessor :name, :cron, :description, :klass, :args, :message
+      attr_reader   :last_enqueue_time, :fetch_missing_args, :status
+
+      def initialize(input_args = {})
+        args = Hash[input_args.map { |k, v| [k.to_s, v] }]
+        @fetch_missing_args = args.delete('fetch_missing_args')
+        @fetch_missing_args = true if @fetch_missing_args.nil?
+
+        @name = args['name']
+        @cron = args['cron']
+        @description = args['description'] if args['description']
+
+        # get class from klass or class
+        @klass = args['klass'] || args['class']
+
+        # set status of job
+        @status = args['status'] || status_from_redis
+
+        # set last enqueue time - from args or from existing job
+        @last_enqueue_time = if args['last_enqueue_time'] && !args['last_enqueue_time'].empty?
+                               parse_enqueue_time(args['last_enqueue_time'])
+                             else
+                               last_enqueue_time_from_redis
+                             end
+
+        # get right arguments for job
+        @args = args['args'].nil? ? [] : parse_args(args['args'])
+        @args += [Time.now.to_f] if args['date_as_argument']
+
+        @active_job = args['active_job'] == true || ((args['active_job']).to_s =~ /^(true|t|yes|y|1)$/i).zero? || false
+        @active_job_queue_name_prefix = args['queue_name_prefix']
+        @active_job_queue_name_delimiter = args['queue_name_delimiter']
+
+        if args['message']
+          @message = args['message']
+          message_data = Sidekiq.load_json(@message) || {}
+          @queue = message_data['queue'] || 'default'
+        elsif @klass
+          message_data = {
+            'class' => @klass.to_s,
+            'args' => @args
+          }
+
+          # get right data for message
+          # only if message wasn't specified before
+          klass_data = case @klass
+                       when Class
+                         @klass.get_sidekiq_options
+                       when String
+                         begin
+                           Sidekiq::Crond::Support.constantize(@klass).get_sidekiq_options
+                         rescue StandardError => _e
+                           # Unknown class
+                           { 'queue' => 'default' }
+                         end
+          end
+
+          message_data = klass_data.merge(message_data)
+          # override queue if setted in config
+          # only if message is hash - can be string (dumped JSON)
+          @queue = if args['queue']
+                     message_data['queue'] = args['queue']
+                   else
+                     message_data['queue'] || 'default'
+                   end
+
+          # dump message as json
+          @message = message_data
+        end
+
+        @queue_name_with_prefix = queue_name_with_prefix
+      end
+
       # crucial part of whole enquing job
       def should_enque?(time)
-        enqueue = false
-        enqueue = Sidekiq.redis do |conn|
+        Sidekiq.redis do |conn|
           status == 'enabled' &&
             not_past_scheduled_time?(time) &&
             not_enqueued_after?(time) &&
             conn.zadd(job_enqueued_key, formated_enqueue_time(time), formated_last_time(time))
         end
-        enqueue
       end
 
       # remove previous informations about run times
@@ -75,7 +142,7 @@ module Sidekiq
 
         save_last_enqueue_time
         add_jid_history jid
-        logger.debug { "enqueued #{@name}: #{@message}" }
+        Sidekiq.logger.debug "enqueued #{@name}: #{@message}"
       end
 
       def active_job?
@@ -135,198 +202,6 @@ module Sidekiq
           }]
         }
       end
-
-      # load cron jobs from Hash
-      # input structure should look like:
-      # {
-      #   'name_of_job' => {
-      #     'class'       => 'MyClass',
-      #     'cron'        => '1 * * * *',
-      #     'args'        => '(OPTIONAL) [Array or Hash]',
-      #     'description' => '(OPTIONAL) Description of job'
-      #   },
-      #   'My super iber cool job' => {
-      #     'class' => 'SecondClass',
-      #     'cron'  => '*/5 * * * *'
-      #   }
-      # }
-      #
-      def self.load_from_hash(hash)
-        array = hash.inject([]) do |out, (key, job)|
-          job['name'] = key
-          out << job
-        end
-        load_from_array array
-      end
-
-      # like to {#load_from_hash}
-      # If exists old jobs in redis but removed from args, destroy old jobs
-      def self.load_from_hash!(hash)
-        destroy_removed_jobs(hash.keys)
-        load_from_hash(hash)
-      end
-
-      # load cron jobs from Array
-      # input structure should look like:
-      # [
-      #   {
-      #     'name'        => 'name_of_job',
-      #     'class'       => 'MyClass',
-      #     'cron'        => '1 * * * *',
-      #     'args'        => '(OPTIONAL) [Array or Hash]',
-      #     'description' => '(OPTIONAL) Description of job'
-      #   },
-      #   {
-      #     'name'  => 'Cool Job for Second Class',
-      #     'class' => 'SecondClass',
-      #     'cron'  => '*/5 * * * *'
-      #   }
-      # ]
-      #
-      def self.load_from_array(array)
-        errors = {}
-        array.each do |job_data|
-          job = new(job_data)
-          errors[job.name] = job.errors unless job.save
-        end
-        errors
-      end
-
-      # like to {#load_from_array}
-      # If exists old jobs in redis but removed from args, destroy old jobs
-      def self.load_from_array!(array)
-        job_names = array.map { |job| job['name'] }
-        destroy_removed_jobs(job_names)
-        load_from_array(array)
-      end
-
-      # get all cron jobs
-      def self.all
-        job_hashes = nil
-        Sidekiq.redis do |conn|
-          set_members = conn.smembers(jobs_key)
-          job_hashes = conn.pipelined do
-            set_members.each do |key|
-              conn.hgetall(key)
-            end
-          end
-        end
-        job_hashes.compact.reject(&:empty?).collect do |h|
-          # no need to fetch missing args from redis since we just got this hash from there
-          Sidekiq::Crond::Job.new(h.merge(fetch_missing_args: false))
-        end
-      end
-
-      def self.count
-        out = 0
-        Sidekiq.redis do |conn|
-          out = conn.scard(jobs_key)
-        end
-        out
-      end
-
-      def self.find(name)
-        # if name is hash try to get name from it
-        name = name[:name] || name['name'] if name.is_a?(Hash)
-
-        output = nil
-        Sidekiq.redis do |conn|
-          output = Job.new conn.hgetall(redis_key(name)) if exists? name
-        end
-        output
-      end
-
-      # create new instance of cron job
-      def self.create(hash)
-        new(hash).save
-      end
-
-      # destroy job by name
-      def self.destroy(name)
-        # if name is hash try to get name from it
-        name = name[:name] || name['name'] if name.is_a?(Hash)
-
-        if (job = find(name))
-          job.destroy
-        else
-          false
-        end
-      end
-
-      attr_accessor :name, :cron, :description, :klass, :args, :message
-      attr_reader   :last_enqueue_time, :fetch_missing_args
-
-      def initialize(input_args = {})
-        args = Hash[input_args.map { |k, v| [k.to_s, v] }]
-        @fetch_missing_args = args.delete('fetch_missing_args')
-        @fetch_missing_args = true if @fetch_missing_args.nil?
-
-        @name = args['name']
-        @cron = args['cron']
-        @description = args['description'] if args['description']
-
-        # get class from klass or class
-        @klass = args['klass'] || args['class']
-
-        # set status of job
-        @status = args['status'] || status_from_redis
-
-        # set last enqueue time - from args or from existing job
-        @last_enqueue_time = if args['last_enqueue_time'] && !args['last_enqueue_time'].empty?
-                               parse_enqueue_time(args['last_enqueue_time'])
-                             else
-                               last_enqueue_time_from_redis
-                             end
-
-        # get right arguments for job
-        @args = args['args'].nil? ? [] : parse_args(args['args'])
-        @args += [Time.now.to_f] if args['date_as_argument']
-
-        @active_job = args['active_job'] == true || ((args['active_job']).to_s =~ /^(true|t|yes|y|1)$/i).zero? || false
-        @active_job_queue_name_prefix = args['queue_name_prefix']
-        @active_job_queue_name_delimiter = args['queue_name_delimiter']
-
-        if args['message']
-          @message = args['message']
-          message_data = Sidekiq.load_json(@message) || {}
-          @queue = message_data['queue'] || 'default'
-        elsif @klass
-          message_data = {
-            'class' => @klass.to_s,
-            'args' => @args
-          }
-
-          # get right data for message
-          # only if message wasn't specified before
-          klass_data = case @klass
-                       when Class
-                         @klass.get_sidekiq_options
-                       when String
-                         begin
-                           Sidekiq::Crond::Support.constantize(@klass).get_sidekiq_options
-                         rescue Exception => e
-                           # Unknown class
-                           { 'queue' => 'default' }
-                         end
-          end
-
-          message_data = klass_data.merge(message_data)
-          # override queue if setted in config
-          # only if message is hash - can be string (dumped JSON)
-          @queue = if args['queue']
-                     message_data['queue'] = args['queue']
-                   else
-                     message_data['queue'] || 'default'
-                   end
-
-          # dump message as json
-          @message = message_data
-        end
-
-        @queue_name_with_prefix = queue_name_with_prefix
-      end
-
-      attr_reader :status
 
       def disable!
         @status = 'disabled'
@@ -458,7 +333,7 @@ module Sidekiq
 
         Sidekiq.redis do |conn|
           # add to set of all jobs
-          conn.sadd self.class.jobs_key, redis_key
+          conn.sadd Sidekiq::Crond::JobKeys.jobs_key, redis_key
 
           # add informations for this job!
           conn.hmset redis_key, *hash_to_redis(to_hash)
@@ -469,7 +344,7 @@ module Sidekiq
             conn.zadd(job_enqueued_key, time.to_f.to_s, formated_last_time(time).to_s)
           end
         end
-        logger.info { "Cron Jobs - add job with name: #{@name}" }
+        Sidekiq.logger.info "Cron Jobs - add job with name: #{@name}"
       end
 
       def save_last_enqueue_time
@@ -499,7 +374,7 @@ module Sidekiq
       def destroy
         Sidekiq.redis do |conn|
           # delete from set
-          conn.srem self.class.jobs_key, redis_key
+          conn.srem Sidekiq::Crond::JobKeys.jobs_key, redis_key
 
           # delete runned timestamps
           conn.unlink job_enqueued_key
@@ -510,13 +385,13 @@ module Sidekiq
           # delete main job
           conn.unlink redis_key
         end
-        logger.info { "Cron Jobs - deleted job with name: #{@name}" }
+        Sidekiq.logger.info "Cron Jobs - deleted job with name: #{@name}"
       end
 
       # remove all job from cron
       def self.destroy_all!
         all.each(&:destroy)
-        logger.info { 'Cron Jobs - deleted all jobs' }
+        Sidekiq.logger.info 'Cron Jobs - deleted all jobs'
       end
 
       # remove "removed jobs" between current jobs and new jobs
@@ -539,18 +414,6 @@ module Sidekiq
 
       def formated_last_time(now = Time.now.utc)
         last_time(now).getutc.iso8601
-      end
-
-      def self.exists?(name)
-        out = false
-        Sidekiq.redis do |conn|
-          out = conn.exists redis_key name
-        end
-        out
-      end
-
-      def exists?
-        self.class.exists? @name
       end
 
       def sort_name
@@ -605,17 +468,17 @@ module Sidekiq
 
       # Redis key for storing one cron job
       def redis_key
-        Sidekiq::Crond::JobHelpers.redis_key @name
+        Sidekiq::Crond::JobKeys.redis_key @name
       end
 
       # Redis key for storing one cron job run times
       # (when poller added job to queue)
       def job_enqueued_key
-        Sidekiq::Crond::JobHelpers.job_enqueued_key @name
+        Sidekiq::Crond::JobKeys.job_enqueued_key @name
       end
 
       def jid_history_key
-        Sidekiq::Crond::JobHelpers.jid_history_key @name
+        Sidekiq::Crond::JobKeys.jid_history_key @name
       end
 
       # Give Hash

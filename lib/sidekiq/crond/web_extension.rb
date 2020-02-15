@@ -2,6 +2,7 @@
 
 module Sidekiq
   module Crond
+    # Web interface
     module WebExtension
       def self.registered(app)
         app.settings.locales << File.join(File.expand_path(__dir__), 'locales')
@@ -10,7 +11,7 @@ module Sidekiq
         app.get '/cron' do
           view_path = File.join(File.expand_path(__dir__), 'views')
 
-          @cron_jobs = Sidekiq::Crond::Job.all
+          @cron_jobs = Sidekiq::Crond::Jobs.all
 
           render(:erb, File.read(File.join(view_path, 'cron.erb')))
         end
@@ -19,7 +20,7 @@ module Sidekiq
         app.get '/cron/:name' do
           view_path = File.join(File.expand_path(__dir__), 'views')
 
-          @job = Sidekiq::Crond::Job.find(route_params[:name])
+          @job = Sidekiq::Crond::Jobs.find(route_params[:name])
           if @job.present?
             render(:erb, File.read(File.join(view_path, 'cron_show.erb')))
           else
@@ -30,8 +31,8 @@ module Sidekiq
         # enque cron job
         app.post '/cron/:name/enque' do
           if route_params[:name] == '__all__'
-            Sidekiq::Crond::Job.all.each(&:enque!)
-          elsif (job = Sidekiq::Crond::Job.find(route_params[:name]))
+            Sidekiq::Crond::Jobs.all.each(&:enque!)
+          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
             job.enque!
           end
           redirect params['redirect'] || "#{root_path}cron"
@@ -40,8 +41,8 @@ module Sidekiq
         # delete schedule
         app.post '/cron/:name/delete' do
           if route_params[:name] == '__all__'
-            Sidekiq::Crond::Job.all.each(&:destroy)
-          elsif (job = Sidekiq::Crond::Job.find(route_params[:name]))
+            Sidekiq::Crond::Jobs.all.each(&:destroy)
+          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
             job.destroy
           end
           redirect "#{root_path}cron"
@@ -50,8 +51,8 @@ module Sidekiq
         # enable job
         app.post '/cron/:name/enable' do
           if route_params[:name] == '__all__'
-            Sidekiq::Crond::Job.all.each(&:enable!)
-          elsif (job = Sidekiq::Crond::Job.find(route_params[:name]))
+            Sidekiq::Crond::Jobs.all.each(&:enable!)
+          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
             job.enable!
           end
           redirect params['redirect'] || "#{root_path}cron"
@@ -60,8 +61,8 @@ module Sidekiq
         # disable job
         app.post '/cron/:name/disable' do
           if route_params[:name] == '__all__'
-            Sidekiq::Crond::Job.all.each(&:disable!)
-          elsif (job = Sidekiq::Crond::Job.find(route_params[:name]))
+            Sidekiq::Crond::Jobs.all.each(&:disable!)
+          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
             job.disable!
           end
           redirect params['redirect'] || "#{root_path}cron"
