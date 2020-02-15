@@ -3,10 +3,12 @@
 require 'fugit'
 require 'sidekiq'
 require 'sidekiq/util'
+require 'sidekiq/crond/job_helpers'
 require 'sidekiq/crond/support'
 
 module Sidekiq
   module Crond
+    # Class with cron jobs
     class Job
       include Util
       extend Util
@@ -39,11 +41,10 @@ module Sidekiq
       # test if job should be enqued If yes add it to queue
       def test_and_enque_for_time!(time)
         # should this job be enqued?
-        if should_enque?(time)
-          enque!
+        return unless should_enque?(time)
 
-          remove_previous_enques(time)
-        end
+        enque!
+        remove_previous_enques(time)
       end
 
       # enque cron job to queue
@@ -77,7 +78,7 @@ module Sidekiq
         logger.debug { "enqueued #{@name}: #{@message}" }
       end
 
-      def is_active_job?
+      def active_job?
         @active_job || defined?(ActiveJob::Base) && Sidekiq::Crond::Support.constantize(@klass.to_s) < ActiveJob::Base
       rescue NameError
         false
@@ -97,7 +98,7 @@ module Sidekiq
       end
 
       def queue_name_with_prefix
-        return @queue unless is_active_job?
+        return @queue unless active_job?
 
         if !@active_job_queue_name_delimiter.to_s.empty?
           queue_name_delimiter = @active_job_queue_name_delimiter
@@ -245,7 +246,7 @@ module Sidekiq
         # if name is hash try to get name from it
         name = name[:name] || name['name'] if name.is_a?(Hash)
 
-        if job = find(name)
+        if (job = find(name))
           job.destroy
         else
           false
@@ -281,7 +282,7 @@ module Sidekiq
         @args = args['args'].nil? ? [] : parse_args(args['args'])
         @args += [Time.now.to_f] if args['date_as_argument']
 
-        @active_job = args['active_job'] == true || ((args['active_job']).to_s =~ /^(true|t|yes|y|1)$/i) == 0 || false
+        @active_job = args['active_job'] == true || ((args['active_job']).to_s =~ /^(true|t|yes|y|1)$/i).zero? || false
         @active_job_queue_name_prefix = args['queue_name_prefix']
         @active_job_queue_name_delimiter = args['queue_name_delimiter']
 
@@ -501,13 +502,13 @@ module Sidekiq
           conn.srem self.class.jobs_key, redis_key
 
           # delete runned timestamps
-          conn.del job_enqueued_key
+          conn.unlink job_enqueued_key
 
           # delete jid_history
-          conn.del jid_history_key
+          conn.unlink jid_history_key
 
           # delete main job
-          conn.del redis_key
+          conn.unlink redis_key
         end
         logger.info { "Cron Jobs - deleted job with name: #{@name}" }
       end
@@ -602,39 +603,19 @@ module Sidekiq
         true
       end
 
-      # Redis key for set of all cron jobs
-      def self.jobs_key
-        'cron_jobs'
-      end
-
-      # Redis key for storing one cron job
-      def self.redis_key(name)
-        "cron_job:#{name}"
-      end
-
       # Redis key for storing one cron job
       def redis_key
-        self.class.redis_key @name
-      end
-
-      # Redis key for storing one cron job run times
-      # (when poller added job to queue)
-      def self.job_enqueued_key(name)
-        "cron_job:#{name}:enqueued"
-      end
-
-      def self.jid_history_key(name)
-        "cron_job:#{name}:jid_history"
+        Sidekiq::Crond::JobHelpers.redis_key @name
       end
 
       # Redis key for storing one cron job run times
       # (when poller added job to queue)
       def job_enqueued_key
-        self.class.job_enqueued_key @name
+        Sidekiq::Crond::JobHelpers.job_enqueued_key @name
       end
 
       def jid_history_key
-        self.class.jid_history_key @name
+        Sidekiq::Crond::JobHelpers.jid_history_key @name
       end
 
       # Give Hash

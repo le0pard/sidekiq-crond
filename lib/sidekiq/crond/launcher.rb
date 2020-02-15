@@ -13,6 +13,7 @@ require 'sidekiq/crond/poller'
 # adding start and stop commands to launcher
 module Sidekiq
   module Cron
+    # Module inject into sidekiq launcher
     module Launcher
       # Add cron poller to launcher
       attr_reader :crond_poller
