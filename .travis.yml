@@ -1,11 +1,26 @@
----
 language: ruby
+os: linux
 
 cache:
- - bundler
+  yarn: true
+  bundler: true
+  directories:
+  - node_modules
+  - $HOME/.nvm
+  - $HOME/.webdrivers
+
+services:
+  - redis-server
 
 rvm:
   - 2.5
   - 2.6
   - 2.7
 
+notifications:
+  email: false
+
+jobs:
+  fast_finish: true
+
+bundler_args: --jobs 3 --retry 3
