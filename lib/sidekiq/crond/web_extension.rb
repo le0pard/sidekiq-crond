@@ -4,68 +4,71 @@ module Sidekiq
   module Crond
     # Web interface
     module WebExtension
-      def self.registered(app)
-        app.settings.locales << File.join(File.expand_path(__dir__), 'locales')
+      class << self
+        def registered(app)
+          app.settings.locales << File.join(File.expand_path(__dir__), 'locales')
 
-        # index page of cron jobs
-        app.get '/cron' do
-          view_path = File.join(File.expand_path(__dir__), 'views')
-
-          @cron_jobs = Sidekiq::Crond::Jobs.all
-
-          render(:erb, File.read(File.join(view_path, 'cron.erb')))
+          jobs_list(app)
+          job_show(app)
+          change_job(app)
         end
 
-        # display job detail + jid history
-        app.get '/cron/:name' do
-          view_path = File.join(File.expand_path(__dir__), 'views')
+        def jobs_list(app)
+          # index page of cron jobs
+          app.get '/cron' do
+            @cron_jobs = Sidekiq::Crond::Jobs.all
+            render_view('cron')
+          end
+        end
 
-          @job = Sidekiq::Crond::Jobs.find(route_params[:name])
-          if @job.present?
-            render(:erb, File.read(File.join(view_path, 'cron_show.erb')))
+        def job_show(app)
+          # display job detail + jid history
+          app.get '/cron/:name' do
+            @job = Sidekiq::Crond::Jobs.find(route_params[:name])
+            if @job.present?
+              render_view('cron_show')
+            else
+              redirect "#{root_path}cron"
+            end
+          end
+        end
+
+        def change_job(app)
+          # enque cron job
+          app.post '/cron/:name/:method' do
+            job_method = get_job_method(route_params[:method])
+            jobs_apply_method(route_params[:name], job_method)
+            redirect params['redirect'] || "#{root_path}cron"
+          end
+        end
+
+        def get_job_method(method)
+          case method
+          when 'disable'
+            :disable!
+          when 'delete'
+            :destroy
+          when 'enque'
+            :enque!
           else
-            redirect "#{root_path}cron"
+            :enable!
           end
         end
 
-        # enque cron job
-        app.post '/cron/:name/enque' do
-          if route_params[:name] == '__all__'
-            Sidekiq::Crond::Jobs.all.each(&:enque!)
-          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
-            job.enque!
+        def jobs_apply_method(name, method)
+          if name == '__all__'
+            Sidekiq::Crond::Jobs.all.each(&method)
+          elsif (job = Sidekiq::Crond::Jobs.find(name))
+            job.public_send(method)
           end
-          redirect params['redirect'] || "#{root_path}cron"
         end
 
-        # delete schedule
-        app.post '/cron/:name/delete' do
-          if route_params[:name] == '__all__'
-            Sidekiq::Crond::Jobs.all.each(&:destroy)
-          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
-            job.destroy
-          end
-          redirect "#{root_path}cron"
+        def view_path
+          @view_path ||= File.join(File.expand_path(__dir__), 'views')
         end
 
-        # enable job
-        app.post '/cron/:name/enable' do
-          if route_params[:name] == '__all__'
-            Sidekiq::Crond::Jobs.all.each(&:enable!)
-          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
-            job.enable!
-          end
-          redirect params['redirect'] || "#{root_path}cron"
-        end
-
-        # disable job
-        app.post '/cron/:name/disable' do
-          if route_params[:name] == '__all__'
-            Sidekiq::Crond::Jobs.all.each(&:disable!)
-          elsif (job = Sidekiq::Crond::Jobs.find(route_params[:name]))
-            job.disable!
-          end
-          redirect params['redirect'] || "#{root_path}cron"
+        def render_view(view)
+          render(:erb, File.read(File.join(view_path, "#{view}.erb")))
         end
       end
     end

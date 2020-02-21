@@ -14,6 +14,10 @@ module Sidekiq
           # Remove the first blank element in case of '::ClassName' notation.
           names.shift if names.size > 1 && names.first.empty?
 
+          constantize_from_names(names)
+        end
+
+        def constantize_from_names(names)
           names.inject(Object) do |constant, name|
             if constant == Object
               constant.const_get(name)

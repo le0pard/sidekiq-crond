@@ -315,7 +315,7 @@ module Sidekiq
           true
         when String
           !@klass.empty?
-          end
+        end
       end
 
       # add job to cron jobs
@@ -359,12 +359,10 @@ module Sidekiq
           jid: jid,
           enqueued: @last_enqueue_time
         }
-        @history_size ||= (Sidekiq.options[:cron_history_size] || 10).to_i - 1
         Sidekiq.redis do |conn|
-          conn.lpush jid_history_key,
-                     Sidekiq.dump_json(jid_history)
+          conn.lpush jid_history_key, Sidekiq.dump_json(jid_history)
           # keep only last 10 entries in a fifo manner
-          conn.ltrim jid_history_key, 0, @history_size
+          conn.ltrim jid_history_key, 0, history_size
         end
       end
 
@@ -421,6 +419,10 @@ module Sidekiq
       end
 
       private
+
+      def history_size
+        @history_size ||= (Sidekiq.options[:cron_history_size] || 10).to_i - 1
+      end
 
       def parsed_cron
         @parsed_cron ||= Fugit.parse_cron(@cron)
