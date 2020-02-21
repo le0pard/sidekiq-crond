@@ -130,6 +130,20 @@ module Sidekiq
             false
           end
         end
+
+        # remove all job from cron
+        def destroy_all!
+          all.each(&:destroy)
+          Sidekiq.logger.info 'Cron Jobs - deleted all jobs'
+        end
+
+        # remove "removed jobs" between current jobs and new jobs
+        def destroy_removed_jobs(new_job_names)
+          current_job_names = all.map(&:name)
+          removed_job_names = current_job_names - new_job_names
+          removed_job_names.each { |j| destroy(j) }
+          removed_job_names
+        end
       end
     end
   end
