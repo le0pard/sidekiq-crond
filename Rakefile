@@ -7,7 +7,7 @@ begin
   require 'rubocop/rake_task'
 
   RuboCop::RakeTask.new(:rubocop) do |task|
-    task.options = ['-D'] # Rails, display cop name
+    task.options = ['-D'] # Display cop name
     task.fail_on_error = true
   end
 rescue LoadError
