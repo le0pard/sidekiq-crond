@@ -36,7 +36,7 @@
     </thead>
 
     <tbody>
-      <% @cron_jobs.sort{|a,b| a.sort_name <=> b.sort_name }.each_with_index do |job, index| %>
+      <% @cron_jobs.each_with_index do |job, index| %>
         <% style = "#{job.disabled? ? "background: #ecc": ""}" %>
         <tr>
           <td style="<%= style %>"><%= t job.status %></td>

@@ -16,7 +16,7 @@ module Sidekiq
         def jobs_list(app)
           # index page of cron jobs
           app.get '/cron' do
-            @cron_jobs = Sidekiq::Crond::Jobs.all
+            @cron_jobs = Sidekiq::Crond::Jobs.all.sort_by(&:sort_name)
             render_view('cron')
           end
         end

@@ -106,7 +106,7 @@ module Sidekiq
           end
 
         save_last_enqueue_time
-        add_jid_history jid
+        add_jid_history(jid)
         Sidekiq.logger.debug "enqueued #{name}: #{args}, queue: #{queue}"
       end
 
