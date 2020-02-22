@@ -5,6 +5,7 @@ module Sidekiq
     # Support for helpers methods
     module Support
       class << self
+        # constantize from rails https://github.com/rails/rails/blob/f33d52c95217212cbacc8d5e44b5a8e3cdc6f5b3/activesupport/lib/active_support/inflector/methods.rb#L271
         def constantize(camel_cased_word)
           names = camel_cased_word.split('::')
 
@@ -14,10 +15,6 @@ module Sidekiq
           # Remove the first blank element in case of '::ClassName' notation.
           names.shift if names.size > 1 && names.first.empty?
 
-          constantize_from_names(names)
-        end
-
-        def constantize_from_names(names)
           names.inject(Object) do |constant, name|
             if constant == Object
               constant.const_get(name)

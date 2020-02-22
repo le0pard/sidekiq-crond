@@ -133,7 +133,7 @@ module Sidekiq
       end
 
       def enabled?
-        @status == ENABLED_STATUS
+        status == ENABLED_STATUS
       end
 
       def disabled?
@@ -176,7 +176,7 @@ module Sidekiq
           end
 
         out.map do |jid_history_raw|
-          Sidekiq.load_json jid_history_raw
+          Sidekiq.load_json(jid_history_raw)
         end
       end
 
@@ -259,14 +259,12 @@ module Sidekiq
         }
         Sidekiq.redis do |conn|
           conn.lpush jid_history_key, Sidekiq.dump_json(jid_history)
-          # keep only last 10 entries in a fifo manner
+          # keep only last "history_size" entries in a fifo manner
           conn.ltrim jid_history_key, 0, history_size
         end
       end
 
       # remove job from cron jobs by name
-      # input:
-      #   first arg: name (string) - name of job (must be same - case sensitive)
       def destroy
         Sidekiq.redis do |conn|
           # delete from set
@@ -281,7 +279,7 @@ module Sidekiq
           # delete main job
           conn.unlink redis_key
         end
-        Sidekiq.logger.info "Cron Jobs - deleted job with name: #{@name}"
+        Sidekiq.logger.info "Cron Jobs - deleted job with name: #{name}"
       end
 
       # Parse cron specification '* * * * *' and returns
