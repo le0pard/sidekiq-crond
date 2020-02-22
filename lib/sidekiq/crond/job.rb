@@ -13,6 +13,11 @@ module Sidekiq
       REMEMBER_THRESHOLD = 24 * 60 * 60
       LAST_ENQUEUE_TIME_FORMAT = '%Y-%m-%d %H:%M:%S %z'
 
+      ENABLED_STATUS = 'enabled'
+      DISABLED_STATUS = 'disabled'
+
+      DEFAULT_QUEUE_NAME = 'default'
+
       attr_accessor :name, :cron, :description, :klass, :args, :message
       attr_reader   :last_enqueue_time, :fetch_missing_args, :status
 
@@ -49,7 +54,7 @@ module Sidekiq
         if args['message']
           @message = args['message']
           message_data = Sidekiq.load_json(@message) || {}
-          @queue = message_data['queue'] || 'default'
+          @queue = message_data['queue'] || DEFAULT_QUEUE_NAME
         elsif @klass
           message_data = {
             'class' => @klass.to_s,
@@ -66,7 +71,7 @@ module Sidekiq
                            Sidekiq::Crond::Support.constantize(@klass).get_sidekiq_options
                          rescue StandardError => _e
                            # Unknown class
-                           { 'queue' => 'default' }
+                           { 'queue' => DEFAULT_QUEUE_NAME }
                          end
           end
 
@@ -76,7 +81,7 @@ module Sidekiq
           @queue = if args['queue']
                      message_data['queue'] = args['queue']
                    else
-                     message_data['queue'] || 'default'
+                     message_data['queue'] || DEFAULT_QUEUE_NAME
                    end
 
           # dump message as json
@@ -89,7 +94,7 @@ module Sidekiq
       # crucial part of whole enquing job
       def should_enque?(time)
         Sidekiq.redis do |conn|
-          status == 'enabled' &&
+          enabled? &&
             not_past_scheduled_time?(time) &&
             not_enqueued_after?(time) &&
             conn.zadd(job_enqueued_key, formated_enqueue_time(time), formated_last_time(time))
@@ -204,17 +209,17 @@ module Sidekiq
       end
 
       def disable!
-        @status = 'disabled'
+        @status = DISABLED_STATUS
         save
       end
 
       def enable!
-        @status = 'enabled'
+        @status = ENABLED_STATUS
         save
       end
 
       def enabled?
-        @status == 'enabled'
+        @status == ENABLED_STATUS
       end
 
       def disabled?
@@ -228,7 +233,7 @@ module Sidekiq
       end
 
       def status_from_redis
-        out = 'enabled'
+        out = ENABLED_STATUS
         if fetch_missing_args
           Sidekiq.redis do |conn|
             status = conn.hget redis_key, 'status'
@@ -286,30 +291,30 @@ module Sidekiq
       end
 
       def errors
-        @errors ||= []
+        @errors || []
       end
 
       def valid?
         # clear previous errors
         @errors = []
 
-        errors << "'name' must be set" if @name.nil? || @name.empty?
+        @errors << "'name' must be set" if @name.nil? || @name.empty?
         if @cron.nil? || @cron.empty?
-          errors << "'cron' must be set"
+          @errors << "'cron' must be set"
         else
           begin
             @parsed_cron = Fugit.do_parse_cron(@cron)
           rescue StandardError => e
-            errors << "'cron' -> #{@cron.inspect} -> #{e.class}: #{e.message}"
+            @errors << "'cron' -> #{@cron.inspect} -> #{e.class}: #{e.message}"
           end
         end
 
-        errors << "'klass' (or class) must be set" unless klass_valid
+        @errors << "'klass' (or class) must be set" unless klass_valid?
 
         errors.empty?
       end
 
-      def klass_valid
+      def klass_valid?
         case @klass
         when Class
           true
@@ -401,7 +406,7 @@ module Sidekiq
       end
 
       def sort_name
-        "#{status == 'enabled' ? 0 : 1}_#{name}".downcase
+        "#{enabled? ? 0 : 1}_#{name}".downcase
       end
 
       private
@@ -472,7 +477,7 @@ module Sidekiq
       # Give Hash
       # returns array for using it for redis.hmset
       def hash_to_redis(hash)
-        hash.inject([]) { |arr, kv| arr + [kv[0], kv[1]] }
+        hash.to_a.flatten
       end
     end
   end
