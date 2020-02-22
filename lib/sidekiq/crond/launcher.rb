@@ -12,7 +12,7 @@ require 'sidekiq/crond/poller'
 # we are creating new cron poller instance and
 # adding start and stop commands to launcher
 module Sidekiq
-  module Cron
+  module Crond
     # Module inject into sidekiq launcher
     module Launcher
       # Add cron poller to launcher
