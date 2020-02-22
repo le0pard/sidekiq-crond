@@ -27,9 +27,11 @@ Gem::Specification.new do |spec|
   end
   spec.require_paths = ['lib']
 
-  spec.add_runtime_dependency 'fugit', '>= 1.1'
+  spec.add_runtime_dependency 'fugit', '~> 1'
   spec.add_runtime_dependency 'sidekiq', '>= 5'
 
-  spec.add_development_dependency 'rubocop', '>= 0.57.2'
-  spec.add_development_dependency 'rubocop-performance', '>= 1.0.0'
+  spec.add_development_dependency 'rake', '~> 12'
+  spec.add_development_dependency 'rspec', '~> 3'
+  spec.add_development_dependency 'rubocop', '~> 0.57'
+  spec.add_development_dependency 'rubocop-performance', '~> 1'
 end
