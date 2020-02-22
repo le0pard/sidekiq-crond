@@ -55,15 +55,7 @@ module Sidekiq
         @args += [Time.now.to_f] if args['date_as_argument']
 
         # override queue if setted in config
-        # only if message is hash - can be string (dumped JSON)
-        @queue =
-          if args['queue']
-            args['queue']
-          elsif active_job?
-            klass_const.queue_name
-          else
-            klass_const.get_sidekiq_options['queue'] || DEFAULT_QUEUE_NAME
-          end
+        @queue = args['queue'] || nil
       end
 
       # crucial part of whole enquing job
@@ -115,11 +107,19 @@ module Sidekiq
       end
 
       def enqueue_active_job
-        klass_const.set(queue: queue).perform_later(*args)
+        if queue.nil?
+          klass_const.perform_later(*args)
+        else
+          klass_const.set(queue: queue).perform_later(*args)
+        end
       end
 
       def enqueue_sidekiq_worker
-        klass_const.set(queue: queue).perform_async(*args)
+        if queue.nil?
+          klass_const.perform_async(*args)
+        else
+          klass_const.set(queue: queue).perform_async(*args)
+        end
       end
 
       def disable!
@@ -175,7 +175,6 @@ module Sidekiq
             end
           end
 
-        # returns nil if out nil
         out.map do |jid_history_raw|
           Sidekiq.load_json jid_history_raw
         end

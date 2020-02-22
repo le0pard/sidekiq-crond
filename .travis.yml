@@ -10,7 +10,7 @@ cache:
   - $HOME/.webdrivers
 
 services:
-  - redis-server
+  - redis
 
 rvm:
   - 2.5
