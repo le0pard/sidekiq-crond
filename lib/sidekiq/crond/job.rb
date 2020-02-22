@@ -239,7 +239,7 @@ module Sidekiq
           # add information about last time! - don't enque right after scheduler poller starts!
           time = Time.now.utc
           unless conn.exists(job_enqueued_key)
-            conn.zadd(job_enqueued_key, time.to_f.to_s, formated_last_time(time).to_s)
+            conn.zadd(job_enqueued_key, formated_enqueue_time(time), formated_last_time(time))
           end
         end
         Sidekiq.logger.info "Cron Jobs - add job with name: #{@name}"
@@ -284,16 +284,16 @@ module Sidekiq
 
       # Parse cron specification '* * * * *' and returns
       # time when last run should be performed
-      def last_time(now = Time.now.utc)
-        parsed_cron.previous_time(now.utc).utc
+      def last_time(time = Time.now.utc)
+        parsed_cron.previous_time(time.utc).utc
       end
 
-      def formated_enqueue_time(now = Time.now.utc)
-        last_time(now).getutc.to_f.to_s
+      def formated_enqueue_time(time = Time.now.utc)
+        last_time(time).utc.to_f.to_s
       end
 
-      def formated_last_time(now = Time.now.utc)
-        last_time(now).getutc.iso8601
+      def formated_last_time(time = Time.now.utc)
+        last_time(time).utc.iso8601
       end
 
       def sort_name
@@ -342,9 +342,7 @@ module Sidekiq
       end
 
       def not_past_scheduled_time?(current_time)
-        last_cron_time = parsed_cron.previous_time(current_time).utc
-        # or could it be?
-        # last_cron_time = last_time(current_time)
+        last_cron_time = last_time(current_time)
         return false if (current_time.to_i - last_cron_time.to_i) > 60
 
         true
