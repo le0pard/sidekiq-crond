@@ -18,7 +18,7 @@ module Sidekiq
 
       DEFAULT_QUEUE_NAME = 'default'
 
-      attr_reader   :name, :cron, :description, :klass, :klass_const, :args,
+      attr_reader   :name, :cron, :description, :klass, :klass_const, :args, :queue,
                     :last_enqueue_time, :fetch_missing_args, :status
 
       def initialize(input_args = {})
@@ -33,11 +33,12 @@ module Sidekiq
 
         # get class from klass or class
         @klass = args['klass'] || args['class']
-        @klass_const = begin
-          Sidekiq::Crond::Support.constantize(@klass.to_s)
-                       rescue NameError
-                         nil
-        end
+        @klass_const =
+          begin
+            Sidekiq::Crond::Support.constantize(klass.to_s)
+          rescue NameError
+            nil
+          end
 
         # set status of job
         @status = args['status'] || status_from_redis
@@ -53,21 +54,16 @@ module Sidekiq
         @args = args['args'].nil? ? [] : parse_args(args['args'])
         @args += [Time.now.to_f] if args['date_as_argument']
 
-        @active_job_queue_name_prefix = args['queue_name_prefix']
-        @active_job_queue_name_delimiter = args['queue_name_delimiter']
-
-        klass_data = @klass.get_sidekiq_options
         # override queue if setted in config
         # only if message is hash - can be string (dumped JSON)
-        @queue = if args['queue']
-                   args['queue']
-                 elsif @active_job
-                   klass_const.queue_name
-                 else
-                   klass_data['queue'] || DEFAULT_QUEUE_NAME
-                  end
-
-        @queue_name_with_prefix = queue_name_with_prefix
+        @queue =
+          if args['queue']
+            args['queue']
+          elsif active_job?
+            klass_const.queue_name
+          else
+            klass_const.get_sidekiq_options['queue'] || DEFAULT_QUEUE_NAME
+          end
       end
 
       # crucial part of whole enquing job
@@ -104,48 +100,26 @@ module Sidekiq
 
         jid =
           if active_job?
-            enqueue_active_job(klass_const).try :provider_job_id
+            enqueue_active_job?.provider_job_id
           else
-            enqueue_sidekiq_worker(klass_const)
+            enqueue_sidekiq_worker
           end
 
         save_last_enqueue_time
         add_jid_history jid
-        Sidekiq.logger.debug "enqueued #{@name}: #{@args}"
+        Sidekiq.logger.debug "enqueued #{name}: #{args}, queue: #{queue}"
       end
 
       def active_job?
         defined?(ActiveJob::Base) && klass_const < ActiveJob::Base
       end
 
-      def enqueue_active_job(klass_const)
-        klass_const.set(queue: @queue).perform_later(*@args)
+      def enqueue_active_job
+        klass_const.set(queue: queue).perform_later(*args)
       end
 
-      def enqueue_sidekiq_worker(klass_const)
-        klass_const.set(queue: queue_name_with_prefix).perform_async(*@args)
-      end
-
-      def queue_name_with_prefix
-        return @queue unless active_job?
-
-        if !@active_job_queue_name_delimiter.to_s.empty?
-          queue_name_delimiter = @active_job_queue_name_delimiter
-        elsif defined?(ActiveJob::Base) && defined?(ActiveJob::Base.queue_name_delimiter) && !ActiveJob::Base.queue_name_delimiter.empty?
-          queue_name_delimiter = ActiveJob::Base.queue_name_delimiter
-        else
-          queue_name_delimiter = '_'
-        end
-
-        if !@active_job_queue_name_prefix.to_s.empty?
-          queue_name = "#{@active_job_queue_name_prefix}#{queue_name_delimiter}#{@queue}"
-        elsif defined?(ActiveJob::Base) && defined?(ActiveJob::Base.queue_name_prefix) && !ActiveJob::Base.queue_name_prefix.to_s.empty?
-          queue_name = "#{ActiveJob::Base.queue_name_prefix}#{queue_name_delimiter}#{@queue}"
-        else
-          queue_name = @queue
-        end
-
-        queue_name
+      def enqueue_sidekiq_worker
+        klass_const.set(queue: queue).perform_async(*args)
       end
 
       def disable!
@@ -197,12 +171,12 @@ module Sidekiq
             begin
               conn.lrange(jid_history_key, 0, -1)
             rescue StandardError
-              nil
+              []
             end
           end
 
         # returns nil if out nil
-        out&.map do |jid_history_raw|
+        out.map do |jid_history_raw|
           Sidekiq.load_json jid_history_raw
         end
       end
@@ -216,9 +190,6 @@ module Sidekiq
           description: @description,
           args: @args.is_a?(String) ? @args : Sidekiq.dump_json(@args || []),
           status: @status,
-          active_job: @active_job,
-          queue_name_prefix: @active_job_queue_name_prefix,
-          queue_name_delimiter: @active_job_queue_name_delimiter,
           last_enqueue_time: @last_enqueue_time
         }
       end
@@ -231,18 +202,18 @@ module Sidekiq
         # clear previous errors
         @errors = []
 
-        @errors << "'name' must be set" if @name.nil? || @name.empty?
-        if @cron.nil? || @cron.empty?
+        @errors << "'name' must be set" if name.nil? || name.empty?
+        if cron.nil? || cron.empty?
           @errors << "'cron' must be set"
         else
           begin
-            @parsed_cron = Fugit.do_parse_cron(@cron)
+            parsed_cron
           rescue StandardError => e
-            @errors << "'cron' -> #{@cron.inspect} -> #{e.class}: #{e.message}"
+            @errors << "'cron' -> #{cron.inspect} -> #{e.class}: #{e.message}"
           end
         end
 
-        @errors << "'klass' (or class) must be set and exist" if @klass_const.nil?
+        @errors << "'klass' (or class) must be set and exist" if klass_const.nil?
         errors.empty?
       end
 
@@ -278,14 +249,14 @@ module Sidekiq
       def save_last_enqueue_time
         Sidekiq.redis do |conn|
           # update last enqueue time
-          conn.hset redis_key, 'last_enqueue_time', @last_enqueue_time
+          conn.hset redis_key, 'last_enqueue_time', last_enqueue_time
         end
       end
 
       def add_jid_history(jid)
         jid_history = {
           jid: jid,
-          enqueued: @last_enqueue_time
+          enqueued: last_enqueue_time
         }
         Sidekiq.redis do |conn|
           conn.lpush jid_history_key, Sidekiq.dump_json(jid_history)
@@ -339,11 +310,11 @@ module Sidekiq
       end
 
       def parsed_cron
-        @parsed_cron ||= Fugit.parse_cron(@cron)
+        @parsed_cron ||= Fugit.parse_cron(cron)
       end
 
       def not_enqueued_after?(time)
-        @last_enqueue_time.nil? || @last_enqueue_time.to_i < last_time(time).to_i
+        last_enqueue_time.nil? || last_enqueue_time.to_i < last_time(time).to_i
       end
 
       # Try parsing inbound args into an array.
