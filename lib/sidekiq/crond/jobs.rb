@@ -103,14 +103,9 @@ module Sidekiq
         end
 
         def find(name)
-          # if name is hash try to get name from it
-          name = name[:name] || name['name'] if name.is_a?(Hash)
-
+          redis_key = Sidekiq::Crond::JobKeys.redis_key(name)
           Sidekiq.redis do |conn|
-            if exists?(name)
-              redis_key = Sidekiq::Crond::JobKeys.redis_key(name)
-              Sidekiq::Crond::Job.new(conn.hgetall(redis_key))
-            end
+            Sidekiq::Crond::Job.new(conn.hgetall(redis_key)) if conn.exists(redis_key)
           end
         end
 
@@ -121,9 +116,6 @@ module Sidekiq
 
         # destroy job by name
         def destroy(name)
-          # if name is hash try to get name from it
-          name = name[:name] || name['name'] if name.is_a?(Hash)
-
           if (job = find(name))
             job.destroy
           else

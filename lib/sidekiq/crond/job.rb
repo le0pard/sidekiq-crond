@@ -18,10 +18,11 @@ module Sidekiq
 
       DEFAULT_QUEUE_NAME = 'default'
 
-      attr_accessor :name, :cron, :description, :klass, :klass_const, :args
-      attr_reader   :last_enqueue_time, :fetch_missing_args, :status
+      attr_reader   :name, :cron, :description, :klass, :klass_const, :args,
+                    :last_enqueue_time, :fetch_missing_args, :status
 
       def initialize(input_args = {})
+        # stringify hash keys
         args = Hash[input_args.map { |k, v| [k.to_s, v] }]
         @fetch_missing_args = args.delete('fetch_missing_args')
         @fetch_missing_args = true if @fetch_missing_args.nil?
@@ -52,7 +53,6 @@ module Sidekiq
         @args = args['args'].nil? ? [] : parse_args(args['args'])
         @args += [Time.now.to_f] if args['date_as_argument']
 
-        @active_job = args['active_job'] == true || ((args['active_job']).to_s =~ /^(true|t|yes|y|1)$/i).zero? || false
         @active_job_queue_name_prefix = args['queue_name_prefix']
         @active_job_queue_name_delimiter = args['queue_name_delimiter']
 
@@ -103,7 +103,7 @@ module Sidekiq
         @last_enqueue_time = time.strftime(LAST_ENQUEUE_TIME_FORMAT)
 
         jid =
-          if defined?(ActiveJob::Base) && klass_const < ActiveJob::Base
+          if active_job?
             enqueue_active_job(klass_const).try :provider_job_id
           else
             enqueue_sidekiq_worker(klass_const)
@@ -115,9 +115,7 @@ module Sidekiq
       end
 
       def active_job?
-        @active_job || defined?(ActiveJob::Base) && Sidekiq::Crond::Support.constantize(@klass.to_s) < ActiveJob::Base
-      rescue NameError
-        false
+        defined?(ActiveJob::Base) && klass_const < ActiveJob::Base
       end
 
       def enqueue_active_job(klass_const)
