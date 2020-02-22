@@ -281,7 +281,7 @@ sidekiq-crond adds itself into this start procedure and starts another thread wi
 sidekiq-crond is checking jobs to be enqueued every 30s by default, you can change it by setting:
 
 ```ruby
-Sidekiq.options[:poll_interval] = 10
+Sidekiq.options[:cron_check_interval] = 10
 ```
 
 sidekiq-crond is safe to use with multiple sidekiq processes or nodes. It uses a Redis sorted set to determine that only the first process who asks can enqueue scheduled jobs into the queue.

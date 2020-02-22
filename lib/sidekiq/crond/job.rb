@@ -18,7 +18,7 @@ module Sidekiq
 
       DEFAULT_QUEUE_NAME = 'default'
 
-      attr_accessor :name, :cron, :description, :klass, :args, :message
+      attr_accessor :name, :cron, :description, :klass, :klass_const, :args
       attr_reader   :last_enqueue_time, :fetch_missing_args, :status
 
       def initialize(input_args = {})
@@ -32,6 +32,11 @@ module Sidekiq
 
         # get class from klass or class
         @klass = args['klass'] || args['class']
+        @klass_const = begin
+          Sidekiq::Crond::Support.constantize(@klass.to_s)
+                       rescue NameError
+                         nil
+        end
 
         # set status of job
         @status = args['status'] || status_from_redis
@@ -51,42 +56,16 @@ module Sidekiq
         @active_job_queue_name_prefix = args['queue_name_prefix']
         @active_job_queue_name_delimiter = args['queue_name_delimiter']
 
-        if args['message']
-          @message = args['message']
-          message_data = Sidekiq.load_json(@message) || {}
-          @queue = message_data['queue'] || DEFAULT_QUEUE_NAME
-        elsif @klass
-          message_data = {
-            'class' => @klass.to_s,
-            'args' => @args
-          }
-
-          # get right data for message
-          # only if message wasn't specified before
-          klass_data = case @klass
-                       when Class
-                         @klass.get_sidekiq_options
-                       when String
-                         begin
-                           Sidekiq::Crond::Support.constantize(@klass).get_sidekiq_options
-                         rescue StandardError => _e
-                           # Unknown class
-                           { 'queue' => DEFAULT_QUEUE_NAME }
-                         end
-          end
-
-          message_data = klass_data.merge(message_data)
-          # override queue if setted in config
-          # only if message is hash - can be string (dumped JSON)
-          @queue = if args['queue']
-                     message_data['queue'] = args['queue']
-                   else
-                     message_data['queue'] || DEFAULT_QUEUE_NAME
-                   end
-
-          # dump message as json
-          @message = message_data
-        end
+        klass_data = @klass.get_sidekiq_options
+        # override queue if setted in config
+        # only if message is hash - can be string (dumped JSON)
+        @queue = if args['queue']
+                   args['queue']
+                 elsif @active_job
+                   klass_const.queue_name
+                 else
+                   klass_data['queue'] || DEFAULT_QUEUE_NAME
+                  end
 
         @queue_name_with_prefix = queue_name_with_prefix
       end
@@ -123,31 +102,16 @@ module Sidekiq
       def enque!(time = Time.now.utc)
         @last_enqueue_time = time.strftime(LAST_ENQUEUE_TIME_FORMAT)
 
-        klass_const =
-          begin
-            Sidekiq::Crond::Support.constantize(@klass.to_s)
-          rescue NameError
-            nil
-          end
-
         jid =
-          if klass_const
-            if defined?(ActiveJob::Base) && klass_const < ActiveJob::Base
-              enqueue_active_job(klass_const).try :provider_job_id
-            else
-              enqueue_sidekiq_worker(klass_const)
-            end
+          if defined?(ActiveJob::Base) && klass_const < ActiveJob::Base
+            enqueue_active_job(klass_const).try :provider_job_id
           else
-            if @active_job
-              Sidekiq::Client.push(active_job_message)
-            else
-              Sidekiq::Client.push(sidekiq_worker_message)
-            end
+            enqueue_sidekiq_worker(klass_const)
           end
 
         save_last_enqueue_time
         add_jid_history jid
-        Sidekiq.logger.debug "enqueued #{@name}: #{@message}"
+        Sidekiq.logger.debug "enqueued #{@name}: #{@args}"
       end
 
       def active_job?
@@ -162,11 +126,6 @@ module Sidekiq
 
       def enqueue_sidekiq_worker(klass_const)
         klass_const.set(queue: queue_name_with_prefix).perform_async(*@args)
-      end
-
-      # siodekiq worker message
-      def sidekiq_worker_message
-        @message.is_a?(String) ? Sidekiq.load_json(@message) : @message
       end
 
       def queue_name_with_prefix
@@ -191,23 +150,6 @@ module Sidekiq
         queue_name
       end
 
-      # active job has different structure how it is loading data from sidekiq
-      # queue, it createaswrapper arround job
-      def active_job_message
-        {
-          'class' => 'ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper',
-          'wrapped' => @klass,
-          'queue' => @queue_name_with_prefix,
-          'description' => @description,
-          'args' => [{
-            'job_class' => @klass,
-            'job_id' => SecureRandom.uuid,
-            'queue_name' => @queue_name_with_prefix,
-            'arguments' => @args
-          }]
-        }
-      end
-
       def disable!
         @status = DISABLED_STATUS
         save
@@ -224,12 +166,6 @@ module Sidekiq
 
       def disabled?
         !enabled?
-      end
-
-      def pretty_message
-        JSON.pretty_generate Sidekiq.load_json(message)
-      rescue JSON::ParserError
-        message
       end
 
       def status_from_redis
@@ -281,7 +217,6 @@ module Sidekiq
           cron: @cron,
           description: @description,
           args: @args.is_a?(String) ? @args : Sidekiq.dump_json(@args || []),
-          message: @message.is_a?(String) ? @message : Sidekiq.dump_json(@message || {}),
           status: @status,
           active_job: @active_job,
           queue_name_prefix: @active_job_queue_name_prefix,
@@ -309,18 +244,8 @@ module Sidekiq
           end
         end
 
-        @errors << "'klass' (or class) must be set" unless klass_valid?
-
+        @errors << "'klass' (or class) must be set and exist" if @klass_const.nil?
         errors.empty?
-      end
-
-      def klass_valid?
-        case @klass
-        when Class
-          true
-        when String
-          !@klass.empty?
-        end
       end
 
       # add job to cron jobs
