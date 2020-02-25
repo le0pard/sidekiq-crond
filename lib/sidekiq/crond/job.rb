@@ -23,7 +23,7 @@ module Sidekiq
 
       def initialize(input_args = {})
         # stringify hash keys
-        args = Hash[input_args.map { |k, v| [k.to_s, v] }]
+        args = input_args.transform_keys(&:to_s)
         @fetch_missing_args = args.delete('fetch_missing_args')
         @fetch_missing_args = true if @fetch_missing_args.nil?
 
